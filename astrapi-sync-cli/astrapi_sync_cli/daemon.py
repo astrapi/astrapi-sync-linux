@@ -5,6 +5,7 @@ periodischer Fallback-Sync als Sicherheitsnetz (falls ein Event verpasst
 wurde -- Netzwerkausfall, watchdog-Limitierung o.ä.)."""
 import asyncio
 import queue
+import sys
 import time
 from pathlib import Path
 
@@ -14,6 +15,12 @@ from watchdog.observers import Observer
 
 from astrapi_sync_cli.api_client import ApiClient
 from astrapi_sync_cli.engine import sync_folder_once
+
+# Schliessen-Codes, mit denen der Server signalisiert, dass die
+# WebSocket-Verbindung nicht nur voruebergehend, sondern DAUERHAFT
+# ungueltig ist (Geraet geloescht/deaktiviert, Token ungueltig, kein
+# Zugriff mehr auf den Ordner) -- siehe astrapi_sync/api/sync.py::folder_events().
+_WS_PERMANENT_CLOSE_CODES = {4401: "Token ungültig", 4403: "kein Zugriff auf diesen Ordner"}
 
 
 class _ChangeHandler(FileSystemEventHandler):
@@ -79,12 +86,30 @@ async def _ws_listener(server_url: str, device_token: str, folder_id: str, sync_
     ws_url = server_url.replace("https://", "wss://").replace("http://", "ws://").rstrip("/")
     ws_url = f"{ws_url}/api/sync/folders/{folder_id}/events?token={device_token}"
     while True:
+        close_code = None
         try:
             async with websockets.connect(ws_url, ping_interval=20) as ws:
                 async for _msg in ws:
                     await sync_fn()
+                close_code = ws.close_code
         except Exception:
-            await asyncio.sleep(5)  # Server kurz nicht erreichbar -- erneut versuchen
+            pass
+        if close_code in _WS_PERMANENT_CLOSE_CODES:
+            # Dauerhafter Fehler (Geraet geloescht/deaktiviert, Token
+            # ungueltig, kein Zugriff mehr) -- endloses Alle-5-Sekunden-
+            # Retry waere fuer immer sinnlos und bliebe fuer den Nutzer
+            # unsichtbar. Task fuer diesen Ordner sauber beenden, deutlich
+            # ins Journal loggen; der periodische Fallback-Sync bleibt
+            # unberuehrt (T-223-SYNC).
+            print(
+                f"[{folder_id}] WebSocket-Push dauerhaft beendet "
+                f"(Code {close_code}: {_WS_PERMANENT_CLOSE_CODES[close_code]}) -- "
+                "Gerät im Server-UI prüfen. Kein weiterer Verbindungsversuch für "
+                "diesen Ordner.",
+                file=sys.stderr,
+            )
+            return
+        await asyncio.sleep(5)  # Server kurz nicht erreichbar -- erneut versuchen
 
 
 async def _periodic_fallback(sync_fn, interval_seconds: int = 300) -> None:
