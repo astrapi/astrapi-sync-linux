@@ -5,6 +5,7 @@ periodischer Fallback-Sync als Sicherheitsnetz (falls ein Event verpasst
 wurde -- Netzwerkausfall, watchdog-Limitierung o.ä.)."""
 import asyncio
 import queue
+import time
 from pathlib import Path
 
 import websockets
@@ -27,7 +28,30 @@ class _ChangeHandler(FileSystemEventHandler):
         self._q.put(True)
 
 
-async def _debounced_local_watch(local_root: Path, sync_fn, debounce_seconds: float = 1.5) -> None:
+class _LocalWriteGuard:
+    """Unterdrückt watchdog-Events für ein kurzes Zeitfenster nach einem
+    Sync-Lauf, der selbst lokal geschrieben hat (Download, lokales Löschen,
+    Verzeichnis-Änderung) -- sonst löst jeder serverseitig ausgelöste
+    Download sofort einen weiteren, unnötigen Sync-Lauf aus, der nichts zu
+    tun findet (T-221-SYNC)."""
+
+    _LOCAL_WRITE_KEYS = ("downloaded", "deleted_local", "dirs_created_local", "dirs_deleted_local")
+
+    def __init__(self, suppress_seconds: float = 2.0):
+        self._suppress_seconds = suppress_seconds
+        self._suppress_until = 0.0
+
+    def note_result(self, result: dict) -> None:
+        if any(result.get(k) for k in self._LOCAL_WRITE_KEYS):
+            self._suppress_until = time.monotonic() + self._suppress_seconds
+
+    def should_suppress(self) -> bool:
+        return time.monotonic() < self._suppress_until
+
+
+async def _debounced_local_watch(
+    local_root: Path, sync_fn, guard: "_LocalWriteGuard | None" = None, debounce_seconds: float = 1.5
+) -> None:
     q: "queue.Queue" = queue.Queue()
     observer = Observer()
     observer.schedule(_ChangeHandler(q), str(local_root), recursive=True)
@@ -40,6 +64,11 @@ async def _debounced_local_watch(local_root: Path, sync_fn, debounce_seconds: fl
             await asyncio.sleep(debounce_seconds)
             while not q.empty():
                 q.get_nowait()
+            if guard is not None and guard.should_suppress():
+                # Events stammen hoechstwahrscheinlich vom eigenen letzten
+                # Sync-Lauf selbst (z.B. gerade heruntergeladene Dateien) --
+                # kein erneuter Lauf noetig (T-221-SYNC).
+                continue
             await sync_fn()
     finally:
         observer.stop()
@@ -77,12 +106,13 @@ async def run_daemon(cfg: dict, folder_ids: list[str] | None = None) -> None:
     locks = {fid: asyncio.Lock() for fid in folders}
     tasks: list[asyncio.Task] = []
 
-    def make_sync_fn(fid: str, root: Path):
+    def make_sync_fn(fid: str, root: Path, guard: "_LocalWriteGuard"):
         async def _sync():
             async with locks[fid]:
                 result = await asyncio.to_thread(
                     sync_folder_once, client, fid, root, device_label
                 )
+                guard.note_result(result)
                 if result.get("aborted"):
                     # Im Dauerbetrieb NIE automatisch bestaetigen -- nur
                     # laut loggen, der naechste Trigger (Dateiaenderung,
@@ -103,10 +133,11 @@ async def run_daemon(cfg: dict, folder_ids: list[str] | None = None) -> None:
 
     for fid, local_path in folders.items():
         root = Path(local_path)
-        sync_fn = make_sync_fn(fid, root)
+        guard = _LocalWriteGuard()
+        sync_fn = make_sync_fn(fid, root, guard)
         # Initialer Sync beim Start, bevor auf Events gewartet wird.
         await sync_fn()
-        tasks.append(asyncio.create_task(_debounced_local_watch(root, sync_fn)))
+        tasks.append(asyncio.create_task(_debounced_local_watch(root, sync_fn, guard)))
         tasks.append(asyncio.create_task(_ws_listener(cfg["server_url"], cfg["device_token"], fid, sync_fn)))
         tasks.append(asyncio.create_task(_periodic_fallback(sync_fn)))
 
