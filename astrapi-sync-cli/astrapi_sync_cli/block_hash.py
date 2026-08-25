@@ -1,4 +1,4 @@
-# astrapi_sync_client/block_hash.py
+# astrapi_sync_cli/block_hash.py
 """Block-Hashing -- muss exakt zum Server (astrapi_sync/api/block_hash.py)
 passen (gleiche Blockgröße, gleiche Hash-Funktion), sonst stimmen die
 Positions-Vergleiche nicht. Bewusst dupliziert statt geteilt: Server und

@@ -1,10 +1,10 @@
-# astrapi_sync_client/api_client.py
+# astrapi_sync_cli/api_client.py
 import json
 from pathlib import Path
 
 import httpx
 
-from astrapi_sync_client.block_hash import DEFAULT_BLOCK_SIZE, hash_blocks, read_block
+from astrapi_sync_cli.block_hash import DEFAULT_BLOCK_SIZE, hash_blocks, read_block
 
 
 class ConflictError(Exception):

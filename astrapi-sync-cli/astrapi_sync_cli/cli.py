@@ -1,12 +1,12 @@
-# astrapi_sync_client/cli.py
+# astrapi_sync_cli/cli.py
 import argparse
 import asyncio
 import sys
 from pathlib import Path
 
-from astrapi_sync_client import config as cfgmod
-from astrapi_sync_client.api_client import ApiClient
-from astrapi_sync_client.engine import MAX_AUTO_DELETE, sync_folder_once
+from astrapi_sync_cli import config as cfgmod
+from astrapi_sync_cli.api_client import ApiClient
+from astrapi_sync_cli.engine import MAX_AUTO_DELETE, sync_folder_once
 
 
 def cmd_pair(args) -> int:
@@ -80,7 +80,7 @@ def cmd_sync(args) -> int:
 
 
 def cmd_daemon(args) -> int:
-    from astrapi_sync_client.daemon import run_daemon
+    from astrapi_sync_cli.daemon import run_daemon
 
     cfg = cfgmod.load()
     if not cfg["device_token"]:

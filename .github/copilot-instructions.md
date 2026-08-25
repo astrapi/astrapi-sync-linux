@@ -1,23 +1,25 @@
-# astrapi-sync-client – Projektkontext für GitHub Copilot
+# astrapi-sync-linux – Projektkontext für GitHub Copilot
 
 Wird im Repo versioniert und von VS Code Copilot automatisch geladen.
 
 ---
 
-## Was ist astrapi-sync-client?
+## Was ist astrapi-sync-linux?
 
-CLI-Client + geteilte Sync-Engine für [astrapi-sync](https://github.com/astrapi/astrapi-sync)
-(Ordner-Synchronisation über mehrere eigene Geräte, Server + Clients). Eigenständiges
-Python-Paket, **unabhängig von astrapi-core** — läuft auf jedem Client-Gerät, nicht auf
-dem Server. PyPI-Paketname: keiner (kein PyPI-Release geplant, reines GitHub-Backup).
+Monorepo mit den Linux-seitigen Clients für [astrapi-sync](https://github.com/astrapi/astrapi-sync)
+(Ordner-Synchronisation über mehrere eigene Geräte, Server + Clients). Zwei
+eigenständige Python-Pakete, beide **unabhängig von astrapi-core**:
 
-Grundlage für die spätere GTK4-Desktop-App ([astrapi-sync-gtk](https://github.com/astrapi/astrapi-sync-gtk)):
-`engine.py`/`api_client.py`/`daemon.py` sind UI-unabhängig und dafür gedacht,
-wiederverwendet zu werden.
+- **`astrapi-sync-cli/`** — fertig. Kommandozeilen-Client + geteilte Sync-Engine.
+- **`astrapi-sync-gui/`** — geplant, noch kein Code. GTK4-Desktop-Oberfläche, hängt
+  als normale Python-Dependency von `astrapi-sync-cli` ab (kein eigenes Protokoll).
+
+Kein PyPI-Release für keins der beiden Pakete geplant — reines GitHub-Backup.
+Android-Client (Kotlin/Gradle) liegt in einem eigenen Repo, `astrapi-sync-android`.
 
 ---
 
-## Stack
+## Stack (astrapi-sync-cli)
 
 | Komponente | Details |
 |---|---|
@@ -32,19 +34,23 @@ wiederverwendet zu werden.
 ## Verzeichnisstruktur
 
 ```
-astrapi_sync_client/
-├── cli.py           # Console-Script: astrapi-sync-cli (pair, add-folder, sync, daemon, status)
-├── config.py         # Lokale Konfiguration (Server-URL, Geräte-Token, Ordner-Zuordnungen)
-├── api_client.py      # HTTP-Client für die Sync-API (Index, Up-/Download, Dirs, Delete)
-├── block_hash.py       # Block-Hashing (Client-Seite, identisch zum Server-Protokoll)
-├── engine.py             # Kern: Drei-Wege-Abgleich (lokal / Server / letzter bekannter Stand)
-├── state.py               # Zuletzt bekannter Server-Stand je Ordner (files + dirs)
-└── daemon.py                # Hintergrundprozess: Dateibeobachtung + WebSocket-Reaktion
+astrapi-sync-cli/
+├── pyproject.toml
+└── astrapi_sync_cli/
+    ├── cli.py           # Console-Script: astrapi-sync-cli (pair, add-folder, sync, daemon, status)
+    ├── config.py         # Lokale Konfiguration (Server-URL, Geräte-Token, Ordner-Zuordnungen)
+    ├── api_client.py      # HTTP-Client für die Sync-API (Index, Up-/Download, Dirs, Delete)
+    ├── block_hash.py       # Block-Hashing (Client-Seite, identisch zum Server-Protokoll)
+    ├── engine.py             # Kern: Drei-Wege-Abgleich (lokal / Server / letzter bekannter Stand)
+    ├── state.py               # Zuletzt bekannter Server-Stand je Ordner (files + dirs)
+    └── daemon.py                # Hintergrundprozess: Dateibeobachtung + WebSocket-Reaktion
+
+astrapi-sync-gui/          # noch kein Code, siehe README dort
 ```
 
 ---
 
-## Sync-Algorithmus (Kurzfassung)
+## Sync-Algorithmus (Kurzfassung, astrapi-sync-cli)
 
 Block-Hashing nach fester Blockgröße (1 MiB, Syncthing-Stil, kein rsync-Rolling-Hash).
 Drei-Wege-Vergleich (lokal / Server / letzter bekannter Stand aus `state.py`) erkennt
@@ -63,5 +69,6 @@ meldet nur, was er gelöscht *hätte* — Ausführung erst mit `--yes-delete`.
 ## Versionierung
 
 Statische Version in `pyproject.toml` (`0.1.0`), **kein** setuptools-scm, **kein**
-PyPI-Release — reines GitHub-Backup, Installation bleibt `pip install -e .` bzw.
-Deployment per manuellem Übertragen auf die Client-Geräte.
+PyPI-Release — reines GitHub-Backup, Installation bleibt `pip install -e .` im
+jeweiligen Unterordner bzw. Deployment per manuellem Übertragen auf die
+Client-Geräte.

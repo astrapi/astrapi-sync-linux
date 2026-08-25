@@ -1,4 +1,4 @@
-# astrapi_sync_client/daemon.py
+# astrapi_sync_cli/daemon.py
 """Dauerbetrieb (Phase 3): lokale Dateiänderungen (watchdog) UND
 Server-Push (WebSocket) lösen jeweils einen Sync-Lauf aus, dazu ein
 periodischer Fallback-Sync als Sicherheitsnetz (falls ein Event verpasst
@@ -11,8 +11,8 @@ import websockets
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from astrapi_sync_client.api_client import ApiClient
-from astrapi_sync_client.engine import sync_folder_once
+from astrapi_sync_cli.api_client import ApiClient
+from astrapi_sync_cli.engine import sync_folder_once
 
 
 class _ChangeHandler(FileSystemEventHandler):

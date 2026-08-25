@@ -1,4 +1,4 @@
-# astrapi_sync_client/state.py
+# astrapi_sync_cli/state.py
 """Pro Ordner: der zuletzt bekannte Server-Stand je Datei (Hash + Größe)
 sowie die Liste zuletzt bekannter leerer Verzeichnisse ("dirs").
 
@@ -18,7 +18,7 @@ Dateien mit zufällig gleichem Inhalt im neuen Ordner fälschlich als
 """
 import json
 
-from astrapi_sync_client.config import state_dir
+from astrapi_sync_cli.config import state_dir
 
 
 def load_state(folder_id: str, local_root) -> dict:

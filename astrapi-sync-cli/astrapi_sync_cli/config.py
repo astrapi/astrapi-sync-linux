@@ -1,4 +1,4 @@
-# astrapi_sync_client/config.py
+# astrapi_sync_cli/config.py
 """Lokale Konfiguration: Server-URL, Geräte-Token, Ordner-Zuordnungen.
 
 Geräte-Token liegt im Klartext in config.json (Datei-Rechte 0600) --

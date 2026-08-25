@@ -1,4 +1,4 @@
-# astrapi_sync_client/engine.py
+# astrapi_sync_cli/engine.py
 """Kern der Sync-Engine: vergleicht lokalen Ordner, Server-Index und den
 zuletzt bekannten Server-Stand (state.py), leitet daraus Uploads,
 Downloads, Löschungen und Konflikte ab.
@@ -10,9 +10,9 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from astrapi_sync_client.api_client import ApiClient, ConflictError
-from astrapi_sync_client.block_hash import whole_file_hash
-from astrapi_sync_client.state import load_state, save_state
+from astrapi_sync_cli.api_client import ApiClient, ConflictError
+from astrapi_sync_cli.block_hash import whole_file_hash
+from astrapi_sync_cli.state import load_state, save_state
 
 # Sicherheitsschwelle gegen Massen-Löschungen: mehr als so viele Dateien
 # in einem einzigen Lauf werden NICHT automatisch gelöscht (weder lokal
