@@ -44,3 +44,14 @@ Server-Stand je Datei gespeichert (`~/.config/astrapi-sync/state/`) —
 weicht beim nächsten Sync sowohl der lokale als auch der Server-Hash
 davon ab, ist das ein echter Konflikt: die lokale Version wird als
 `*.syncconflict-<zeit>-<gerät>` gesichert, die Server-Version übernommen.
+
+Leere Verzeichnisse werden ebenfalls synchronisiert (eigener, einfacherer
+Abgleich neben dem Datei-Protokoll, kein Massenlöschungs-Schutz nötig, da
+ein leeres Verzeichnis keine Daten verlieren kann).
+
+Sicherheitsschwelle gegen Massen-Löschungen: löst ein Sync-Lauf mehr als
+eine Handvoll Datei-Löschungen aus (Standard: 3), bricht er vorher ab und
+meldet nur, was er gelöscht *hätte* — erst `--yes-delete` führt sie
+tatsächlich aus. Grund: der Client kann nicht unterscheiden zwischen
+"bewusst gelöscht" und "Server/Ordner hat plötzlich unerwartet nichts
+mehr" (z. B. externe Manipulation).
