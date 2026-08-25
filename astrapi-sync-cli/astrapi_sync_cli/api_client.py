@@ -1,10 +1,22 @@
 # astrapi_sync_cli/api_client.py
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 
 from astrapi_sync_cli.block_hash import DEFAULT_BLOCK_SIZE, hash_blocks, read_block
+
+
+def _quote_path(rel_path: str) -> str:
+    """URL-kodiert einen relativen Pfad für den Einsatz im URL-Pfad-Segment.
+
+    Ohne das wird z.B. "#" von httpx als Fragment-Trenner interpretiert und
+    der Rest des Pfads still abgeschnitten, bevor die Anfrage überhaupt
+    losgeschickt wird (siehe T-214-SYNC) -- "/" bleibt bewusst unkodiert,
+    da es der echte Pfad-Trenner ist.
+    """
+    return quote(rel_path, safe="/")
 
 
 class ConflictError(Exception):
@@ -54,7 +66,9 @@ class ApiClient:
     def download(self, folder_id: str, rel_path: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_name(dest.name + ".astrapi-sync-tmp")
-        with self._client.stream("GET", f"/api/sync/folders/{folder_id}/files/{rel_path}") as r:
+        with self._client.stream(
+            "GET", f"/api/sync/folders/{folder_id}/files/{_quote_path(rel_path)}"
+        ) as r:
             r.raise_for_status()
             with open(tmp, "wb") as f:
                 for chunk in r.iter_bytes():
@@ -90,7 +104,7 @@ class ApiClient:
             "expected_server_sha256": expected_server_sha256,
         }
         r = self._client.post(
-            f"/api/sync/folders/{folder_id}/files/{rel_path}",
+            f"/api/sync/folders/{folder_id}/files/{_quote_path(rel_path)}",
             data={"meta": json.dumps(meta)},
             files={"data": ("data.bin", data, "application/octet-stream")},
         )
@@ -100,19 +114,19 @@ class ApiClient:
         return r.json()
 
     def delete(self, folder_id: str, rel_path: str) -> None:
-        r = self._client.delete(f"/api/sync/folders/{folder_id}/files/{rel_path}")
+        r = self._client.delete(f"/api/sync/folders/{folder_id}/files/{_quote_path(rel_path)}")
         if r.status_code not in (200, 204, 404):
             r.raise_for_status()
 
     def create_dir(self, folder_id: str, rel_path: str) -> None:
-        r = self._client.post(f"/api/sync/folders/{folder_id}/dirs/{rel_path}")
+        r = self._client.post(f"/api/sync/folders/{folder_id}/dirs/{_quote_path(rel_path)}")
         r.raise_for_status()
 
     def delete_dir(self, folder_id: str, rel_path: str) -> bool:
         """Gibt zurück, ob das Verzeichnis tatsächlich entfernt wurde --
         False z.B. wenn es zwischenzeitlich (noch im selben Lauf) doch
         nicht mehr leer war."""
-        r = self._client.delete(f"/api/sync/folders/{folder_id}/dirs/{rel_path}")
+        r = self._client.delete(f"/api/sync/folders/{folder_id}/dirs/{_quote_path(rel_path)}")
         if r.status_code == 404:
             return False
         r.raise_for_status()
