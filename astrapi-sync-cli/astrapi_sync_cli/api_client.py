@@ -117,3 +117,9 @@ class ApiClient:
             return False
         r.raise_for_status()
         return bool(r.json().get("deleted", True))
+
+    def log_sync(self, folder_id: str, summary: dict) -> None:
+        """Meldet dem Server eine Zusammenfassung des gerade beendeten
+        Sync-Laufs fürs Activity Log (ein Eintrag pro Lauf, nicht pro
+        Datei -- der Server selbst sieht nur Einzel-Requests)."""
+        self._client.post(f"/api/sync/folders/{folder_id}/sync-log", json=summary)

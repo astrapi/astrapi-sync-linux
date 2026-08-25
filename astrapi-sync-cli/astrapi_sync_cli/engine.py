@@ -255,4 +255,35 @@ def sync_folder_once(
         known_dirs.discard(rel_path)
 
     save_state(folder_id, local_root, {"files": known, "dirs": sorted(known_dirs)})
+    _log_summary(client, folder_id, result)
     return result
+
+
+def _log_summary(client: ApiClient, folder_id: str, result: dict) -> None:
+    """Meldet dem Server eine Ein-Zeilen-Zusammenfassung fürs Activity Log
+    -- nur wenn sich tatsächlich etwas geändert hat, sonst würde jeder
+    Daemon-Poll-Zyklus ohne Änderungen das Log zuspammen. Darf den Sync
+    selbst nicht zum Scheitern bringen, wenn der Server gerade kurz nicht
+    erreichbar ist -- der eigentliche Sync ist zu diesem Zeitpunkt bereits
+    abgeschlossen."""
+    total = (
+        len(result["uploaded"])
+        + len(result["downloaded"])
+        + len(result["deleted_local"])
+        + len(result["deleted_remote"])
+    )
+    if total == 0:
+        return
+    try:
+        client.log_sync(
+            folder_id,
+            {
+                "uploaded": len(result["uploaded"]),
+                "downloaded": len(result["downloaded"]),
+                "deleted_local": len(result["deleted_local"]),
+                "deleted_remote": len(result["deleted_remote"]),
+                "conflicts": len(result["conflicts"]),
+            },
+        )
+    except Exception:
+        pass
