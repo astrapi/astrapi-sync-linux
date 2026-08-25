@@ -125,12 +125,40 @@ def cmd_daemon(args) -> int:
 
 
 def cmd_status(args) -> int:
+    """Zeigt neben der Config auch den echten lokalen Sync-Zustand je
+    Ordner -- Anzahl bekannter Dateien/Verzeichnisse und Zeitpunkt des
+    letzten Laufs aus der lokalen state.json, ganz ohne Server-Roundtrip
+    (T-228-SYNC)."""
+    import json
+    from datetime import datetime
+
+    from astrapi_sync_cli.config import state_dir
+
     cfg = cfgmod.load()
     print(f"Server:      {cfg['server_url'] or '(nicht gekoppelt)'}")
     print(f"Geräte-ID:   {cfg['device_id'] or '-'}")
     print("Ordner:")
     for fid, local_path in cfg.get("folders", {}).items():
-        print(f"  {fid} -> {local_path}")
+        line = f"  {fid} -> {local_path}"
+        state_path = state_dir() / f"{fid}.json"
+        if not state_path.exists():
+            print(f"{line}  (noch nie synchronisiert)")
+            continue
+        try:
+            raw = json.loads(state_path.read_text())
+        except json.JSONDecodeError:
+            print(f"{line}  (State-Datei beschädigt, siehe {state_path})")
+            continue
+        if raw.get("local_root") != local_path:
+            # Ordner wurde inzwischen mit einem anderen lokalen Pfad
+            # verbunden -- der gespeicherte Stand gehört zum alten Pfad
+            # und wird beim nächsten Sync verworfen (siehe state.py).
+            print(f"{line}  (Pfad seit letztem Sync geändert -- Stand wird beim nächsten Lauf neu aufgebaut)")
+            continue
+        n_files = len(raw.get("files", {}))
+        n_dirs = len(raw.get("dirs", []))
+        last_sync = datetime.fromtimestamp(state_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{line}  ({n_files} Dateien, {n_dirs} Verzeichnisse, zuletzt synchronisiert {last_sync})")
     return 0
 
 
