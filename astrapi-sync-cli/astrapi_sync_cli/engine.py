@@ -170,7 +170,14 @@ def sync_folder_once(
         local_changed = last_known is None or last_known.get("sha256") != local_hash
         remote_changed = last_known is None or last_known.get("sha256") != remote["sha256"]
 
-        if local_changed and remote_changed and last_known is not None:
+        # last_known is None UND Inhalt divergiert (der lokale/remote-
+        # Gleichstand wurde oben bereits per "continue" abgefangen) ist
+        # genauso ein "kann nicht automatisch entscheiden wer gewinnt" wie
+        # der Fall mit bekanntem Stand -- das explizite Ausschliessen
+        # dieses Falls (frueher: "and last_known is not None") ueberschrieb
+        # die Server-Version bisher stillschweigend, ohne Sicherungskopie
+        # (T-215-SYNC).
+        if local_changed and remote_changed:
             _conflict_copy(local_path, device_label)
             client.download(folder_id, rel_path, local_path)
             known[rel_path] = {"sha256": remote["sha256"], "size": remote["size"]}
@@ -183,7 +190,8 @@ def sync_folder_once(
             result["downloaded"].append(rel_path)
             continue
 
-        # lokal geaendert (oder Erst-Sync ohne bekannten Stand) -> hochladen
+        # nur lokal geaendert (Erst-Sync ohne bekannten Stand landet jetzt
+        # im Konfliktfall oben, siehe T-215-SYNC) -> hochladen
         try:
             info = client.upload(folder_id, rel_path, local_path, remote.get("blocks"), remote.get("sha256"))
         except ConflictError:
