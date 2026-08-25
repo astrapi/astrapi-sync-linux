@@ -85,10 +85,20 @@ def cmd_sync(args) -> int:
         return 1
     device_label = cfg.get("device_label") or "geraet"
     had_abort = False
+    had_error = False
     for fid, local_path in folders.items():
-        result = sync_folder_once(
-            client, fid, Path(local_path), device_label=device_label, confirm_deletes=args.yes_delete
-        )
+        try:
+            result = sync_folder_once(
+                client, fid, Path(local_path), device_label=device_label, confirm_deletes=args.yes_delete
+            )
+        except Exception as exc:
+            # Ein Fehler bei EINEM Ordner (z.B. HTTP 403 nach veralteter
+            # folder_id-Zuordnung) darf nicht die ganze Schleife abbrechen
+            # -- deutlich ausgeben und mit dem naechsten Ordner
+            # weitermachen (T-216-SYNC, real so aufgetreten).
+            had_error = True
+            print(f"[{fid}] FEHLER: {_format_error(exc)}", file=sys.stderr)
+            continue
         if result.get("aborted"):
             had_abort = True
             print(f"[{fid}] ABGEBROCHEN: {result['reason']}")
@@ -99,7 +109,7 @@ def cmd_sync(args) -> int:
             print("  Wenn das gewollt ist: 'astrapi-sync-cli sync --yes-delete' erneut ausführen.")
         else:
             print(f"[{fid}] {result}")
-    return 1 if had_abort else 0
+    return 1 if (had_abort or had_error) else 0
 
 
 def cmd_daemon(args) -> int:
