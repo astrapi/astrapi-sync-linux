@@ -36,6 +36,18 @@ astrapi-sync-cli sync
 astrapi-sync-cli daemon
 ```
 
+### Automatischer Start (systemd --user)
+
+Bei Installation über das Arch-Paket (`packages_archlinux/astrapi-sync-cli`)
+liegt eine `astrapi-sync-cli.service`-User-Unit bei:
+
+```bash
+systemctl --user enable --now astrapi-sync-cli.service
+
+# läuft auch ohne aktive Login-Session (z.B. nach Reboot vor dem Login):
+loginctl enable-linger "$USER"
+```
+
 ## Sync-Algorithmus (Kurzfassung)
 
 Block-Hashing nach fester Blockgröße (1 MiB, Syncthing-Stil, kein
