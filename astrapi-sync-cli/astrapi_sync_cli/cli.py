@@ -4,9 +4,32 @@ import asyncio
 import sys
 from pathlib import Path
 
+import httpx
+
 from astrapi_sync_cli import config as cfgmod
 from astrapi_sync_cli.api_client import ApiClient
 from astrapi_sync_cli.engine import MAX_AUTO_DELETE, sync_folder_once
+
+
+def _server_detail(response: httpx.Response) -> str:
+    """Extrahiert FastAPIs "detail"-Feld aus einer Fehlerantwort, falls
+    vorhanden, statt des rohen Response-Texts (T-229-SYNC)."""
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text or f"{response.status_code} {response.reason_phrase}"
+    if isinstance(body, dict) and "detail" in body:
+        return str(body["detail"])
+    return response.text or f"{response.status_code} {response.reason_phrase}"
+
+
+def _format_error(exc: Exception) -> str:
+    """Menschenlesbare Fehlermeldung statt rohem Traceback (T-229-SYNC)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return _server_detail(exc.response)
+    if isinstance(exc, httpx.RequestError):
+        return f"Server nicht erreichbar ({exc})"
+    return str(exc)
 
 
 def cmd_pair(args) -> int:
@@ -143,7 +166,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    sys.exit(args.func(args))
+    try:
+        sys.exit(args.func(args))
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        # Zentraler Fang fuer alle Befehle, die cmd_sync's eigene
+        # Pro-Ordner-Behandlung nicht durchlaufen (pair, list-folders,
+        # status-Vorstufe, daemon-Start) -- klare Meldung statt rohem
+        # Traceback (T-229-SYNC).
+        print(f"FEHLER: {_format_error(exc)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
