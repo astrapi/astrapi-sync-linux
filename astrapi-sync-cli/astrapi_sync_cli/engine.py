@@ -202,6 +202,15 @@ def sync_folder_once(
             if fresh:
                 client.download(folder_id, rel_path, local_path)
                 known[rel_path] = {"sha256": fresh["sha256"], "size": fresh["size"]}
+            else:
+                # Server hat die Datei zwischen dem Upload-Versuch und
+                # diesem Nachschlagen geloescht -- den alten known-Eintrag
+                # NICHT stehen lassen, sonst haelt der naechste Lauf den
+                # (nie hochgeladenen) Konfliktinhalt faelschlich fuer
+                # "vom Server bewusst geloescht" und loescht ihn lokal
+                # (T-222-SYNC). Ohne bekannten Stand greift beim naechsten
+                # Lauf stattdessen die Konflikterkennung aus T-215-SYNC.
+                known.pop(rel_path, None)
             result["conflicts"].append(rel_path)
             continue
         known[rel_path] = {"sha256": info["sha256"], "size": local_path.stat().st_size}
