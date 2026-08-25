@@ -43,6 +43,14 @@ class ApiClient:
         r.raise_for_status()
         return {e["path"]: e for e in r.json()["files"]}
 
+    def get_index_full(self, folder_id: str) -> tuple[dict[str, dict], list[str]]:
+        """Wie get_index(), liefert zusätzlich die (leeren) Verzeichnisse --
+        ein Request statt zwei."""
+        r = self._client.get(f"/api/sync/folders/{folder_id}/index")
+        r.raise_for_status()
+        body = r.json()
+        return {e["path"]: e for e in body["files"]}, body.get("dirs", [])
+
     def download(self, folder_id: str, rel_path: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_name(dest.name + ".astrapi-sync-tmp")
@@ -95,3 +103,17 @@ class ApiClient:
         r = self._client.delete(f"/api/sync/folders/{folder_id}/files/{rel_path}")
         if r.status_code not in (200, 204, 404):
             r.raise_for_status()
+
+    def create_dir(self, folder_id: str, rel_path: str) -> None:
+        r = self._client.post(f"/api/sync/folders/{folder_id}/dirs/{rel_path}")
+        r.raise_for_status()
+
+    def delete_dir(self, folder_id: str, rel_path: str) -> bool:
+        """Gibt zurück, ob das Verzeichnis tatsächlich entfernt wurde --
+        False z.B. wenn es zwischenzeitlich (noch im selben Lauf) doch
+        nicht mehr leer war."""
+        r = self._client.delete(f"/api/sync/folders/{folder_id}/dirs/{rel_path}")
+        if r.status_code == 404:
+            return False
+        r.raise_for_status()
+        return bool(r.json().get("deleted", True))

@@ -1,10 +1,13 @@
 # astrapi_sync_client/state.py
-"""Pro Ordner: der zuletzt bekannte Server-Stand je Datei (Hash + Größe).
+"""Pro Ordner: der zuletzt bekannte Server-Stand je Datei (Hash + Größe)
+sowie die Liste zuletzt bekannter leerer Verzeichnisse ("dirs").
 
 Grundlage für die Drei-Wege-Erkennung in engine.py: weicht der aktuelle
 lokale ODER der aktuelle Server-Hash vom hier gespeicherten "letzten
 bekannten" Hash ab, hat sich seit dem letzten Sync etwas geändert --
-weichen BEIDE ab, ist es ein echter Konflikt.
+weichen BEIDE ab, ist es ein echter Konflikt. Für leere Verzeichnisse gilt
+dieselbe Drei-Wege-Logik, nur ohne Hash (nur "war bekannt: ja/nein"), da
+es dort nichts als den bloßen Pfad gibt, das sich "ändern" könnte.
 
 An den lokalen Pfad gebunden (local_root wird mitgespeichert): zeigt ein
 folder_id inzwischen auf einen ANDEREN lokalen Ordner (add-folder wurde
@@ -21,10 +24,10 @@ from astrapi_sync_client.config import state_dir
 def load_state(folder_id: str, local_root) -> dict:
     p = state_dir() / f"{folder_id}.json"
     if not p.exists():
-        return {"files": {}}
+        return {"files": {}, "dirs": []}
     data = json.loads(p.read_text())
     if data.get("local_root") != str(local_root):
-        return {"files": {}}
+        return {"files": {}, "dirs": []}
     return data
 
 

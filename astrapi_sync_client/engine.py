@@ -34,6 +34,21 @@ def _local_files(root: Path) -> dict[str, Path]:
     }
 
 
+def _local_empty_dirs(root: Path) -> list[str]:
+    """Relative Pfade aller (rekursiv) leeren lokalen Verzeichnisse.
+
+    Muss NACH dem Datei-Sync-Loop aufgerufen werden -- ein Verzeichnis,
+    das gerade erst eine Datei bekommen (Up-/Download) oder verloren
+    (Löschung) hat, darf nicht mit einem veralteten Leer-Zustand
+    bewertet werden.
+    """
+    return [
+        p.relative_to(root).as_posix()
+        for p in sorted(root.rglob("*"))
+        if p.is_dir() and not any(f.is_file() for f in p.rglob("*"))
+    ]
+
+
 def _conflict_copy(local_path: Path, device_label: str) -> Path:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     conflict_path = local_path.with_name(f"{local_path.stem}.syncconflict-{ts}-{device_label}{local_path.suffix}")
@@ -73,10 +88,11 @@ def sync_folder_once(
     max_auto_delete: int = MAX_AUTO_DELETE,
 ) -> dict:
     local_root.mkdir(parents=True, exist_ok=True)
-    remote_index = client.get_index(folder_id)
+    remote_index, remote_dirs = client.get_index_full(folder_id)
     local_index = _local_files(local_root)
     state = load_state(folder_id, local_root)
     known = state.get("files", {})
+    known_dirs = set(state.get("dirs", []))
 
     local_deletes, remote_deletes = _plan_deletions(remote_index, local_index, known)
     total_deletes = len(local_deletes) + len(remote_deletes)
@@ -97,6 +113,10 @@ def sync_folder_once(
         "deleted_local": [],
         "deleted_remote": [],
         "conflicts": [],
+        "dirs_created_local": [],
+        "dirs_created_remote": [],
+        "dirs_deleted_local": [],
+        "dirs_deleted_remote": [],
     }
 
     for rel_path in sorted(set(remote_index) | set(local_index) | set(known)):
@@ -179,5 +199,60 @@ def sync_folder_once(
         known[rel_path] = {"sha256": info["sha256"], "size": local_path.stat().st_size}
         result["uploaded"].append(rel_path)
 
-    save_state(folder_id, local_root, {"files": known})
+    # ── Leere Verzeichnisse ────────────────────────────────────────────────
+    # Kein Massenlöschungs-Schutz nötig wie oben bei Dateien: ein leeres
+    # Verzeichnis enthält per Definition keine Daten, die verloren gehen
+    # könnten -- Erstellen/Löschen läuft daher immer automatisch.
+    # local_dirs erst JETZT (nach dem Datei-Loop) ermitteln: ein
+    # Verzeichnis, das durch einen gerade erfolgten Up-/Download seinen
+    # Leer-Zustand verloren hat, darf hier nicht mehr als leer gelten.
+    local_dirs = set(_local_empty_dirs(local_root))
+    remote_dirs_set = set(remote_dirs)
+
+    for rel_path in sorted(local_dirs | remote_dirs_set | known_dirs):
+        in_local = rel_path in local_dirs
+        in_remote = rel_path in remote_dirs_set
+        was_known = rel_path in known_dirs
+
+        if in_local and in_remote:
+            known_dirs.add(rel_path)
+            continue
+
+        if in_local and not in_remote:
+            if was_known:
+                # bekannt gewesen, Server hat ihn geloescht -> lokal nachziehen.
+                # rmdir() kann fehlschlagen, wenn "leer" hier veraltet ist
+                # (z.B. weiter oben im selben Lauf gerade erst eine Datei
+                # hineinsynchronisiert wurde) -- dann bleibt er bekannt,
+                # kein Fantom-Löschen im Ergebnis-Report.
+                try:
+                    (local_root / rel_path).rmdir()
+                    known_dirs.discard(rel_path)
+                    result["dirs_deleted_local"].append(rel_path)
+                except OSError:
+                    known_dirs.add(rel_path)
+            else:
+                client.create_dir(folder_id, rel_path)
+                known_dirs.add(rel_path)
+                result["dirs_created_remote"].append(rel_path)
+            continue
+
+        if in_remote and not in_local:
+            if was_known:
+                # bekannt gewesen, lokal geloescht -> dem Server mitteilen
+                if client.delete_dir(folder_id, rel_path):
+                    known_dirs.discard(rel_path)
+                    result["dirs_deleted_remote"].append(rel_path)
+                else:
+                    known_dirs.add(rel_path)
+            else:
+                (local_root / rel_path).mkdir(parents=True, exist_ok=True)
+                known_dirs.add(rel_path)
+                result["dirs_created_local"].append(rel_path)
+            continue
+
+        # weder lokal noch remote, nur noch im Verlaufsspeicher -> vergessen
+        known_dirs.discard(rel_path)
+
+    save_state(folder_id, local_root, {"files": known, "dirs": sorted(known_dirs)})
     return result
