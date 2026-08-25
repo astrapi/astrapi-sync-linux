@@ -6,7 +6,7 @@ from pathlib import Path
 
 from astrapi_sync_client import config as cfgmod
 from astrapi_sync_client.api_client import ApiClient
-from astrapi_sync_client.engine import sync_folder_once
+from astrapi_sync_client.engine import MAX_AUTO_DELETE, sync_folder_once
 
 
 def cmd_pair(args) -> int:
@@ -61,10 +61,22 @@ def cmd_sync(args) -> int:
         print("Keine Ordner konfiguriert -- siehe 'astrapi-sync-cli add-folder'.", file=sys.stderr)
         return 1
     device_label = cfg.get("device_label") or "geraet"
+    had_abort = False
     for fid, local_path in folders.items():
-        result = sync_folder_once(client, fid, Path(local_path), device_label=device_label)
-        print(f"[{fid}] {result}")
-    return 0
+        result = sync_folder_once(
+            client, fid, Path(local_path), device_label=device_label, confirm_deletes=args.yes_delete
+        )
+        if result.get("aborted"):
+            had_abort = True
+            print(f"[{fid}] ABGEBROCHEN: {result['reason']}")
+            if result["would_delete_local"]:
+                print(f"  Würde lokal gelöscht: {result['would_delete_local']}")
+            if result["would_delete_remote"]:
+                print(f"  Würde auf dem Server gelöscht: {result['would_delete_remote']}")
+            print("  Wenn das gewollt ist: 'astrapi-sync-cli sync --yes-delete' erneut ausführen.")
+        else:
+            print(f"[{fid}] {result}")
+    return 1 if had_abort else 0
 
 
 def cmd_daemon(args) -> int:
@@ -110,6 +122,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sy = sub.add_parser("sync", help="Einmaligen Sync-Lauf ausführen")
     sy.add_argument("--folder", default=None, help="Nur diesen Ordner syncen (Standard: alle)")
+    sy.add_argument(
+        "--yes-delete",
+        action="store_true",
+        help=f"Löschungen auch dann ausführen, wenn ein Lauf mehr als {MAX_AUTO_DELETE} "
+        "Dateien auf einmal löschen würde (sonst wird zur Sicherheit abgebrochen)",
+    )
     sy.set_defaults(func=cmd_sync)
 
     da = sub.add_parser("daemon", help="Dauerhaft im Hintergrund syncen (Dateibeobachtung + WebSocket-Push)")

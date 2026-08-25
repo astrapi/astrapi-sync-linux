@@ -14,6 +14,17 @@ from astrapi_sync_client.api_client import ApiClient, ConflictError
 from astrapi_sync_client.block_hash import whole_file_hash
 from astrapi_sync_client.state import load_state, save_state
 
+# Sicherheitsschwelle gegen Massen-Löschungen: mehr als so viele Dateien
+# in einem einzigen Lauf werden NICHT automatisch gelöscht (weder lokal
+# noch remote), sondern der Lauf bricht vorher ab und meldet, was er
+# gelöscht HÄTTE. Grund: der Client kann nicht unterscheiden zwischen
+# "jemand hat bewusst Dateien gelöscht" und "der Server/lokale Ordner hat
+# plötzlich unerwartet nichts mehr" (z.B. weil außerhalb der App etwas am
+# Datenverzeichnis manipuliert wurde) -- ein einzelner Sync-Lauf sollte
+# nie mehr als eine Handvoll Dateien auf einmal stillschweigend vernichten
+# können. Siehe T-203-SYNC.
+MAX_AUTO_DELETE = 3
+
 
 def _local_files(root: Path) -> dict[str, Path]:
     return {
@@ -30,14 +41,55 @@ def _conflict_copy(local_path: Path, device_label: str) -> Path:
     return conflict_path
 
 
+def _plan_deletions(
+    remote_index: dict, local_index: dict, known: dict
+) -> tuple[list[str], list[str]]:
+    """Ermittelt, welche lokalen bzw. Remote-Löschungen dieser Lauf
+    auslösen WÜRDE, ohne irgendetwas auszuführen -- Grundlage für die
+    Massen-Löschungs-Sicherheitsabfrage in sync_folder_once()."""
+    local_deletes: list[str] = []
+    remote_deletes: list[str] = []
+    for rel_path in set(remote_index) | set(local_index) | set(known):
+        remote = remote_index.get(rel_path)
+        local_path = local_index.get(rel_path)
+        last_known = known.get(rel_path)
+        if last_known is None:
+            continue
+        if remote is None and local_path is not None:
+            if whole_file_hash(local_path) == last_known.get("sha256"):
+                local_deletes.append(rel_path)
+        elif remote is not None and local_path is None:
+            if last_known.get("sha256") == remote["sha256"]:
+                remote_deletes.append(rel_path)
+    return local_deletes, remote_deletes
+
+
 def sync_folder_once(
-    client: ApiClient, folder_id: str, local_root: Path, device_label: str = "geraet"
+    client: ApiClient,
+    folder_id: str,
+    local_root: Path,
+    device_label: str = "geraet",
+    confirm_deletes: bool = False,
+    max_auto_delete: int = MAX_AUTO_DELETE,
 ) -> dict:
     local_root.mkdir(parents=True, exist_ok=True)
     remote_index = client.get_index(folder_id)
     local_index = _local_files(local_root)
-    state = load_state(folder_id)
+    state = load_state(folder_id, local_root)
     known = state.get("files", {})
+
+    local_deletes, remote_deletes = _plan_deletions(remote_index, local_index, known)
+    total_deletes = len(local_deletes) + len(remote_deletes)
+    if total_deletes > max_auto_delete and not confirm_deletes:
+        return {
+            "aborted": True,
+            "reason": (
+                f"{total_deletes} Löschungen in einem Lauf "
+                f"(Grenze: {max_auto_delete}) -- ohne Bestätigung nicht ausgeführt"
+            ),
+            "would_delete_local": local_deletes,
+            "would_delete_remote": remote_deletes,
+        }
 
     result = {
         "uploaded": [],
@@ -127,5 +179,5 @@ def sync_folder_once(
         known[rel_path] = {"sha256": info["sha256"], "size": local_path.stat().st_size}
         result["uploaded"].append(rel_path)
 
-    save_state(folder_id, {"files": known})
+    save_state(folder_id, local_root, {"files": known})
     return result

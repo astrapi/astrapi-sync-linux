@@ -83,6 +83,18 @@ async def run_daemon(cfg: dict, folder_ids: list[str] | None = None) -> None:
                 result = await asyncio.to_thread(
                     sync_folder_once, client, fid, root, device_label
                 )
+                if result.get("aborted"):
+                    # Im Dauerbetrieb NIE automatisch bestaetigen -- nur
+                    # laut loggen, der naechste Trigger (Dateiaenderung,
+                    # WebSocket-Event, periodischer Fallback) versucht es
+                    # einfach erneut. Manuelles Eingreifen (sync --yes-delete)
+                    # noetig, wenn die Loeschung wirklich gewollt ist.
+                    print(f"[{fid}] ABGEBROCHEN: {result['reason']}")
+                    if result["would_delete_local"]:
+                        print(f"  Würde lokal gelöscht: {result['would_delete_local']}")
+                    if result["would_delete_remote"]:
+                        print(f"  Würde auf dem Server gelöscht: {result['would_delete_remote']}")
+                    return
                 changed = sum(len(v) for v in result.values())
                 if changed:
                     print(f"[{fid}] {result}")
