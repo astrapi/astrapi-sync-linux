@@ -38,7 +38,30 @@ def load() -> dict:
     return {**DEFAULTS, **data}
 
 
+def atomic_write(path: Path, content: str, mode: int | None = None) -> None:
+    """Schreibt content atomar (Temp-Datei im selben Verzeichnis + os.replace()).
+
+    Bricht der Prozess mitten im Schreiben ab (Absturz, SIGKILL,
+    Stromausfall), bleibt dank atomarem Rename immer entweder die alte
+    oder die neue vollständige Datei stehen, nie ein kaputter
+    Zwischenzustand (T-217-SYNC). Mit gesetztem `mode` bekommt die
+    Temp-Datei ihre Rechte im selben Syscall wie das Anlegen, dann
+    ersetzt `os.replace()` atomar die Zieldatei -- kein Zeitfenster mit
+    zu weiten Rechten, unabhängig davon, ob die Zieldatei vorher schon
+    (mit anderen Rechten) existierte (T-218-SYNC).
+    """
+    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    data = content.encode()
+    if mode is not None:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+    else:
+        tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
 def save(cfg: dict) -> None:
-    p = config_path()
-    p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
-    p.chmod(0o600)
+    atomic_write(config_path(), json.dumps(cfg, indent=2, ensure_ascii=False), mode=0o600)
