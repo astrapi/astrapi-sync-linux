@@ -30,8 +30,12 @@ class _ChangeHandler(FileSystemEventHandler):
         self._q = q
 
     def on_any_event(self, event):
-        if event.is_directory:
-            return
+        # Verzeichnis-Events NICHT ignorieren: das Löschen eines leeren
+        # Ordners erzeugt nur ein Verzeichnis-Event, kein einziges
+        # Datei-Event -- ein früherer "if event.is_directory: return" hat
+        # solche Änderungen komplett verschluckt, sichtbar wurde die
+        # Löschung dann erst 5 Minuten später über den periodischen
+        # Fallback-Sync statt sofort.
         if ".astrapi-sync-tmp" in event.src_path or ".syncconflict-" in event.src_path:
             return
         self._q.put(True)
