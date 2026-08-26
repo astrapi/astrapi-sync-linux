@@ -4,6 +4,7 @@ Server-Push (WebSocket) lösen jeweils einen Sync-Lauf aus, dazu ein
 periodischer Fallback-Sync als Sicherheitsnetz (falls ein Event verpasst
 wurde -- Netzwerkausfall, watchdog-Limitierung o.ä.)."""
 import asyncio
+import contextlib
 import queue
 import sys
 import time
@@ -13,6 +14,7 @@ import websockets
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from astrapi_sync_cli import config as cfgmod
 from astrapi_sync_cli.api_client import ApiClient
 from astrapi_sync_cli.engine import sync_folder_once
 
@@ -118,18 +120,55 @@ async def _periodic_fallback(sync_fn, interval_seconds: int = 300) -> None:
         await sync_fn()
 
 
+class _ConfigChangeHandler(FileSystemEventHandler):
+    """Reagiert nur auf Änderungen genau an cfg_path -- config.save()
+    schreibt atomar über eine Temp-Datei + os.replace() (T-217-SYNC),
+    das erscheint watchdog als "moved" mit dest_path == cfg_path, nicht
+    als "modified" mit src_path == cfg_path. Beides wird hier erfasst."""
+
+    def __init__(self, q: "queue.Queue", cfg_path: Path):
+        self._q = q
+        self._cfg_path = str(cfg_path)
+
+    def on_any_event(self, event):
+        if event.is_directory:
+            return
+        if self._cfg_path in (event.src_path, getattr(event, "dest_path", None)):
+            self._q.put(True)
+
+
+async def _watch_config(cfg_path: Path, on_change, debounce_seconds: float = 1.5) -> None:
+    """Beobachtet config.json auf Änderungen und ruft on_change() debounced
+    auf -- ein per 'add-folder' hinzugefügter (oder entfernter) Ordner
+    wird so ohne Dienst-Neustart übernommen, statt nur beim nächsten
+    Prozessstart gesehen zu werden."""
+    q: "queue.Queue" = queue.Queue()
+    observer = Observer()
+    observer.schedule(_ConfigChangeHandler(q, cfg_path), str(cfg_path.parent), recursive=False)
+    observer.start()
+    try:
+        while True:
+            await asyncio.to_thread(q.get)
+            await asyncio.sleep(debounce_seconds)
+            while not q.empty():
+                q.get_nowait()
+            await on_change()
+    finally:
+        observer.stop()
+        observer.join()
+
+
 async def run_daemon(cfg: dict, folder_ids: list[str] | None = None) -> None:
     client = ApiClient(cfg["server_url"], cfg["device_token"])
-    folders = cfg.get("folders", {})
-    if folder_ids:
-        folders = {k: v for k, v in folders.items() if k in folder_ids}
-    if not folders:
-        print("Keine Ordner konfiguriert -- siehe 'astrapi-sync-cli add-folder'.")
-        return
-
     device_label = cfg.get("device_label") or "geraet"
-    locks = {fid: asyncio.Lock() for fid in folders}
-    tasks: list[asyncio.Task] = []
+    locks: dict[str, asyncio.Lock] = {}
+    folder_tasks: dict[str, list[asyncio.Task]] = {}
+
+    def _wanted_folders(source_cfg: dict) -> dict:
+        folders = source_cfg.get("folders", {})
+        if folder_ids:
+            folders = {k: v for k, v in folders.items() if k in folder_ids}
+        return folders
 
     def make_sync_fn(fid: str, root: Path, guard: "_LocalWriteGuard"):
         async def _sync():
@@ -156,15 +195,46 @@ async def run_daemon(cfg: dict, folder_ids: list[str] | None = None) -> None:
 
         return _sync
 
-    for fid, local_path in folders.items():
+    async def _start_folder(fid: str, local_path: str) -> None:
+        if fid in folder_tasks:
+            return
         root = Path(local_path)
+        locks[fid] = asyncio.Lock()
         guard = _LocalWriteGuard()
         sync_fn = make_sync_fn(fid, root, guard)
-        # Initialer Sync beim Start, bevor auf Events gewartet wird.
+        # Initialer Sync beim Aufnehmen, bevor auf Events gewartet wird.
         await sync_fn()
-        tasks.append(asyncio.create_task(_debounced_local_watch(root, sync_fn, guard)))
-        tasks.append(asyncio.create_task(_ws_listener(cfg["server_url"], cfg["device_token"], fid, sync_fn)))
-        tasks.append(asyncio.create_task(_periodic_fallback(sync_fn)))
+        folder_tasks[fid] = [
+            asyncio.create_task(_debounced_local_watch(root, sync_fn, guard)),
+            asyncio.create_task(_ws_listener(cfg["server_url"], cfg["device_token"], fid, sync_fn)),
+            asyncio.create_task(_periodic_fallback(sync_fn)),
+        ]
+        print(f"[{fid}] Ordner aufgenommen ({root})")
 
-    print(f"astrapi-sync-cli daemon läuft für {len(folders)} Ordner …")
-    await asyncio.gather(*tasks)
+    async def _stop_folder(fid: str) -> None:
+        for task in folder_tasks.pop(fid, []):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        locks.pop(fid, None)
+        print(f"[{fid}] Ordner nicht mehr in der Config -- Überwachung beendet")
+
+    async def _on_config_change() -> None:
+        new_folders = _wanted_folders(cfgmod.load())
+        for fid in set(folder_tasks) - set(new_folders):
+            await _stop_folder(fid)
+        for fid in set(new_folders) - set(folder_tasks):
+            await _start_folder(fid, new_folders[fid])
+
+    for fid, local_path in _wanted_folders(cfg).items():
+        await _start_folder(fid, local_path)
+
+    if not folder_tasks:
+        print("Keine Ordner konfiguriert -- siehe 'astrapi-sync-cli add-folder'.")
+    else:
+        print(f"astrapi-sync-cli daemon läuft für {len(folder_tasks)} Ordner …")
+
+    # Läuft dauerhaft weiter, auch ohne Ordner -- sonst würde ein erster,
+    # später per add-folder ergänzter Ordner nie gesehen, weil der Prozess
+    # längst beendet wäre.
+    await _watch_config(cfgmod.config_path(), _on_config_change)
