@@ -1,13 +1,16 @@
 [Unit]
-Description=astrapi-sync Daemon (Ordner-Synchronisation, Dateibeobachtung + WebSocket-Push)
+Description=astrapi-sync CLI Daemon for %i
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+User=%i
 ExecStart=/usr/bin/astrapi-sync-cli daemon
 Restart=on-failure
-RestartSec=15
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
