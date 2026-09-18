@@ -288,6 +288,10 @@ def _log_summary(client: ApiClient, folder_id: str, result: dict) -> None:
         + len(result["downloaded"])
         + len(result["deleted_local"])
         + len(result["deleted_remote"])
+        + len(result["dirs_created_local"])
+        + len(result["dirs_created_remote"])
+        + len(result["dirs_deleted_local"])
+        + len(result["dirs_deleted_remote"])
     )
     if total == 0:
         return
@@ -300,6 +304,22 @@ def _log_summary(client: ApiClient, folder_id: str, result: dict) -> None:
                 "deleted_local": len(result["deleted_local"]),
                 "deleted_remote": len(result["deleted_remote"]),
                 "conflicts": len(result["conflicts"]),
+                # Datei-genaue Ergänzung fürs Verlauf-Feature (T-338-SYNC) --
+                # der Server speichert daraus je eine Verlaufszeile pro Pfad.
+                # Ordner-Pfade gehörten von Anfang an dazu (siehe
+                # dirs_created_local/remote weiter oben in sync_folder_once()),
+                # fehlten hier aber -- dadurch tauchte ein auf diesem Gerät
+                # neu angelegter/gelöschter Ordner im Verlauf nur auf, wenn
+                # ein ANDERES Gerät ihn nachzog und dabei korrekt meldete.
+                "uploaded_paths": result["uploaded"],
+                "downloaded_paths": result["downloaded"],
+                "deleted_local_paths": result["deleted_local"],
+                "deleted_remote_paths": result["deleted_remote"],
+                "conflict_paths": result["conflicts"],
+                "dirs_created_local_paths": result["dirs_created_local"],
+                "dirs_created_remote_paths": result["dirs_created_remote"],
+                "dirs_deleted_local_paths": result["dirs_deleted_local"],
+                "dirs_deleted_remote_paths": result["dirs_deleted_remote"],
             },
         )
     except Exception:
